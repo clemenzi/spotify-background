@@ -41,7 +41,7 @@ async function createBlurredBackground(
         blend: "over",
       },
     ])
-    .png({ compressionLevel: 4 })
+    .png()
     .toBuffer();
 }
 
@@ -144,7 +144,7 @@ export async function generateNowPlayingImage(
       { input: albumArt, top: albumY, left: albumX },
       { input: textOverlay, top: 0, left: 0 },
     ])
-    .png({ compressionLevel: 3 })
+    .png()
     .toBuffer();
 }
 
