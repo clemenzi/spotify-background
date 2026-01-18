@@ -64,31 +64,30 @@ function createTextOverlay(
   // Estimate character width ratio for the font (approximately 0.55 for this font family)
   const charWidthRatio = 0.55;
 
+  // Minimum scale factor to avoid text becoming too small
+  const minScaleFactor = 0.5;
+
   // Calculate base font sizes
-  let trackSize = Math.round(CONFIG.TRACK_FONT_SIZE * sizeFactor);
-  let artistSize = Math.round(CONFIG.ARTIST_FONT_SIZE * sizeFactor);
+  const baseTrackSize = Math.round(CONFIG.TRACK_FONT_SIZE * sizeFactor);
+  const baseArtistSize = Math.round(CONFIG.ARTIST_FONT_SIZE * sizeFactor);
 
-  // Estimate text widths
-  const estimatedTrackWidth = track.length * trackSize * charWidthRatio;
-  const estimatedArtistWidth = artist.length * artistSize * charWidthRatio;
-
-  // Calculate scale factors for each text element
+  // Calculate track size independently
+  const estimatedTrackWidth = track.length * baseTrackSize * charWidthRatio;
   const trackScaleFactor = estimatedTrackWidth > maxTextWidth
-    ? maxTextWidth / estimatedTrackWidth
+    ? Math.max(maxTextWidth / estimatedTrackWidth, minScaleFactor)
     : 1;
+  const trackSize = Math.round(baseTrackSize * trackScaleFactor);
+
+  // Calculate artist size independently
+  const estimatedArtistWidth = artist.length * baseArtistSize * charWidthRatio;
   const artistScaleFactor = estimatedArtistWidth > maxTextWidth
-    ? maxTextWidth / estimatedArtistWidth
+    ? Math.max(maxTextWidth / estimatedArtistWidth, minScaleFactor)
     : 1;
+  const artistSize = Math.round(baseArtistSize * artistScaleFactor);
 
-  // Use the smaller scale factor to maintain visual harmony
-  const textScaleFactor = Math.min(trackScaleFactor, artistScaleFactor, 1);
-
-  // Apply dynamic scaling with a minimum size floor
-  const minScaleFactor = 0.5; // Don't go below 50% of original size
-  const finalScaleFactor = Math.max(textScaleFactor, minScaleFactor);
-
-  trackSize = Math.round(trackSize * finalScaleFactor);
-  artistSize = Math.round(artistSize * finalScaleFactor);
+  // Calculate vertical positioning based on individual sizes
+  const trackOffsetY = Math.round(8 * sizeFactor * trackScaleFactor);
+  const artistOffsetY = Math.round(22 * sizeFactor * artistScaleFactor);
 
   return Buffer.from(`
     <svg width="${width}" height="${height}">
@@ -96,8 +95,8 @@ function createTextOverlay(
         .track { font-family: ${fontFamily}; font-size: ${trackSize}px; font-weight: 700; fill: white; }
         .artist { font-family: ${fontFamily}; font-size: ${artistSize}px; font-weight: 500; fill: rgba(255,255,255,0.9); }
       </style>
-      <text x="${textX}" y="${centerY - Math.round(8 * sizeFactor * finalScaleFactor)}" class="track">${escapeXml(track)}</text>
-      <text x="${textX}" y="${centerY + Math.round(22 * sizeFactor * finalScaleFactor)}" class="artist">${escapeXml(artist)}</text>
+      <text x="${textX}" y="${centerY - trackOffsetY}" class="track">${escapeXml(track)}</text>
+      <text x="${textX}" y="${centerY + artistOffsetY}" class="artist">${escapeXml(artist)}</text>
     </svg>
   `);
 }

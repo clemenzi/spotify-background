@@ -49,6 +49,12 @@ export async function getSpotifyInfo(): Promise<SpotifyTrack | null> {
     }
   }
 
+  // Limit to 6 artists maximum
+  const artistList = artist.split(/,\s*/);
+  if (artistList.length > 6) {
+    artist = artistList.slice(0, 6).join(", ") + "...";
+  }
+
   return { artist, track, artworkUrl };
 }
 
