@@ -51,7 +51,7 @@ async function updateBackground(track: SpotifyTrack, screen: ScreenInfo): Promis
     const image = await generateNowPlayingImage(artwork, track, screen, track.artworkUrl);
 
     const filename = `now_playing_${Date.now()}.png`;
-    const newOutputPath = join(process.cwd(), filename);
+    const newOutputPath = join('/tmp', filename);
 
     await writeFile(newOutputPath, image);
 

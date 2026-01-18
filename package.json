@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "description": "Spotify Now Playing desktop background for macOS",
   "type": "module",
-  "main": "src/index.ts",
+  "main": "src/cli.ts",
+  "bin": {
+    "spotify-background": "./src/cli.ts"
+  },
   "scripts": {
-    "start": "npx tsx src/index.ts"
+    "start": "tsx src/cli.ts"
   },
   "keywords": [
     "spotify",
@@ -17,10 +20,12 @@
   "license": "ISC",
   "packageManager": "pnpm@10.26.2",
   "dependencies": {
+    "commander": "^14.0.2",
     "run-applescript": "^7.1.0",
     "sharp": "^0.34.5"
   },
   "devDependencies": {
-    "@types/node": "^25.0.9"
+    "@types/node": "^25.0.9",
+    "tsx": "^4.21.0"
   }
 }
