@@ -54,10 +54,41 @@ function createTextOverlay(
   sizeFactor: number
 ): Buffer {
   const centerY = height / 2;
-  const trackSize = Math.round(CONFIG.TRACK_FONT_SIZE * sizeFactor);
-  const artistSize = Math.round(CONFIG.ARTIST_FONT_SIZE * sizeFactor);
   const fontFamily =
     "-apple-system, BlinkMacSystemFont, 'Helvetica Neue', 'SF Pro Display', sans-serif";
+
+  // Calculate available width for text (with right margin)
+  const rightMargin = Math.round(80 * sizeFactor);
+  const maxTextWidth = width - textX - rightMargin;
+
+  // Estimate character width ratio for the font (approximately 0.55 for this font family)
+  const charWidthRatio = 0.55;
+
+  // Calculate base font sizes
+  let trackSize = Math.round(CONFIG.TRACK_FONT_SIZE * sizeFactor);
+  let artistSize = Math.round(CONFIG.ARTIST_FONT_SIZE * sizeFactor);
+
+  // Estimate text widths
+  const estimatedTrackWidth = track.length * trackSize * charWidthRatio;
+  const estimatedArtistWidth = artist.length * artistSize * charWidthRatio;
+
+  // Calculate scale factors for each text element
+  const trackScaleFactor = estimatedTrackWidth > maxTextWidth
+    ? maxTextWidth / estimatedTrackWidth
+    : 1;
+  const artistScaleFactor = estimatedArtistWidth > maxTextWidth
+    ? maxTextWidth / estimatedArtistWidth
+    : 1;
+
+  // Use the smaller scale factor to maintain visual harmony
+  const textScaleFactor = Math.min(trackScaleFactor, artistScaleFactor, 1);
+
+  // Apply dynamic scaling with a minimum size floor
+  const minScaleFactor = 0.5; // Don't go below 50% of original size
+  const finalScaleFactor = Math.max(textScaleFactor, minScaleFactor);
+
+  trackSize = Math.round(trackSize * finalScaleFactor);
+  artistSize = Math.round(artistSize * finalScaleFactor);
 
   return Buffer.from(`
     <svg width="${width}" height="${height}">
@@ -65,8 +96,8 @@ function createTextOverlay(
         .track { font-family: ${fontFamily}; font-size: ${trackSize}px; font-weight: 700; fill: white; }
         .artist { font-family: ${fontFamily}; font-size: ${artistSize}px; font-weight: 500; fill: rgba(255,255,255,0.9); }
       </style>
-      <text x="${textX}" y="${centerY - Math.round(8 * sizeFactor)}" class="track">${escapeXml(track)}</text>
-      <text x="${textX}" y="${centerY + Math.round(22 * sizeFactor)}" class="artist">${escapeXml(artist)}</text>
+      <text x="${textX}" y="${centerY - Math.round(8 * sizeFactor * finalScaleFactor)}" class="track">${escapeXml(track)}</text>
+      <text x="${textX}" y="${centerY + Math.round(22 * sizeFactor * finalScaleFactor)}" class="artist">${escapeXml(artist)}</text>
     </svg>
   `);
 }
