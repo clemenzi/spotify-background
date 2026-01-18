@@ -28,11 +28,25 @@ export async function getSpotifyInfo(): Promise<SpotifyTrack | null> {
   let track = trackRaw;
 
   // Extract featured artists from track name
-  const featMatch = track.match(/\s*[\(\[](?:feat\.?|ft\.?)\s+([^)\]]+)[\)\]]/i);
+  // Comprehensive regex covering multiple languages and formats:
+  // - Keywords: feat, ft, featuring, with, w/, con (IT/ES), avec (FR), mit (DE), c/
+  // - Formats: (feat. X), [ft X], - feat X, – featuring X, — with X
+  const featPatterns = [
+    // Pattern 1: Inside parentheses or brackets - e.g. "(feat. Artist)" or "[ft Artist]"
+    /\s*[\(\[]\s*(?:feat\.?|ft\.?|featuring|with|w\/|con|avec|mit|c\/)\s+([^)\]]+)[\)\]]/i,
+    // Pattern 2: After dash/hyphen - e.g. "Track - feat. Artist" or "Track – featuring Artist"
+    /\s*[-–—]\s*(?:feat\.?|ft\.?|featuring|with|w\/|con|avec|mit|c\/)\s+(.+)$/i,
+    // Pattern 3: Open-ended at end (no delimiter) - e.g. "Track feat. Artist"
+    /\s+(?:feat\.?|ft\.?|featuring)\s+(.+)$/i,
+  ];
 
-  if (featMatch) {
-    track = track.replace(featMatch[0], "").trim();
-    artist = `${artist}, ${featMatch[1]}`;
+  for (const pattern of featPatterns) {
+    const featMatch = track.match(pattern);
+    if (featMatch) {
+      track = track.replace(featMatch[0], "").trim();
+      artist = `${artist}, ${featMatch[1].trim()}`;
+      break;
+    }
   }
 
   return { artist, track, artworkUrl };
