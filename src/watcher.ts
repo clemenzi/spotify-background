@@ -92,8 +92,26 @@ async function poll(screen: ScreenInfo): Promise<void> {
           try {
             await setDesktopBackground(state.originalBackground);
             console.log("🖼️  Restored original background");
-          } catch {
-            console.error("❌ Failed to restore original background");
+          } catch (error) {
+            console.error("❌ Failed to restore original background:", error);
+          }
+        }
+      }
+      return;
+    }
+
+    // If there's no artwork URL, Spotify is likely playing an ad
+    if (!track.artworkUrl) {
+      if (state.lastTrackId !== null) {
+        console.log("📢 Ad playing - restoring original background");
+        state.lastTrackId = null;
+
+        if (state.originalBackground) {
+          try {
+            await setDesktopBackground(state.originalBackground);
+            console.log("🖼️  Restored original background");
+          } catch (error) {
+            console.error("❌ Failed to restore original background:", error);
           }
         }
       }
@@ -174,8 +192,8 @@ export async function cleanup(): Promise<void> {
     try {
       await setDesktopBackground(state.originalBackground);
       console.log(`🖼️  Restored original background`);
-    } catch {
-      console.error("❌ Failed to restore original background");
+    } catch (error) {
+      console.error("❌ Failed to restore original background:", error);
     }
   }
 
