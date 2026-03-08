@@ -2,6 +2,37 @@ import { runAppleScript } from "run-applescript";
 import type { SpotifyTrack } from "./config";
 
 /**
+ * Splits an artist string by common multi-artist delimiters and returns
+ * a deduplicated, trimmed list of individual artist names.
+ */
+function parseArtistList(artistStr: string): string[] {
+  if (!artistStr || !artistStr.trim()) return [];
+  return artistStr
+    .split(/,\s*|\s+&\s+/)
+    .map((a) => a.trim())
+    .filter((a) => a.length > 0);
+}
+
+/**
+ * Merges two artist strings, preserving order and removing duplicates.
+ * The first string is treated as the primary source.
+ */
+function mergeArtists(primary: string, secondary: string): string {
+  const primaryList = parseArtistList(primary);
+  const secondaryList = parseArtistList(secondary);
+
+  const seen = new Set(primaryList.map((a) => a.toLowerCase()));
+  for (const a of secondaryList) {
+    if (!seen.has(a.toLowerCase())) {
+      primaryList.push(a);
+      seen.add(a.toLowerCase());
+    }
+  }
+
+  return primaryList.join(", ");
+}
+
+/**
  * Fetches current track info from Spotify via AppleScript.
  * Returns null if Spotify isn't running or no track is playing.
  */
@@ -10,7 +41,7 @@ export async function getSpotifyInfo(): Promise<SpotifyTrack | null> {
     tell application "Spotify"
       if it is running then
         if player state is playing then
-          return (artist of current track) & "|||" & (name of current track) & "|||" & (artwork url of current track)
+          return (artist of current track) & "|||" & (name of current track) & "|||" & (artwork url of current track) & "|||" & (album artist of current track)
         else
           return "paused"
         end if
@@ -22,9 +53,12 @@ export async function getSpotifyInfo(): Promise<SpotifyTrack | null> {
 
   if (result === "null" || result === "paused") return null;
 
-  const [artistRaw, trackRaw, artworkUrl] = result.split("|||");
+  const [artistRaw, trackRaw, artworkUrl, albumArtistRaw] = result.split("|||");
 
-  let artist = artistRaw;
+  // Merge the track artist(s) with the album artist field, which on Spotify
+  // often contains all collaborating artists (e.g. "LDA & Aka7Even") while
+  // `artist` may only carry the primary one (e.g. "LDA").
+  let artist = mergeArtists(artistRaw, albumArtistRaw ?? "");
   let track = trackRaw;
 
   // Extract featured artists from track name
@@ -44,7 +78,7 @@ export async function getSpotifyInfo(): Promise<SpotifyTrack | null> {
     const featMatch = track.match(pattern);
     if (featMatch) {
       track = track.replace(featMatch[0], "").trim();
-      artist = `${artist}, ${featMatch[1].trim()}`;
+      artist = mergeArtists(artist, featMatch[1].trim());
       break;
     }
   }
