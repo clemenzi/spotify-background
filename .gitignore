@@ -1,3 +1,5 @@
 node_modules/
 dist/
 now_playing*.png
+package-lock.json
+
