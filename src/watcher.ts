@@ -14,6 +14,7 @@ interface WatcherState {
   originalBackground: string | null;
   isShuttingDown: boolean;
   pollIntervalId: ReturnType<typeof setInterval> | null;
+  isWaitingForSpotify: boolean;
 }
 
 const state: WatcherState = {
@@ -25,6 +26,7 @@ const state: WatcherState = {
   originalBackground: null,
   isShuttingDown: false,
   pollIntervalId: null,
+  isWaitingForSpotify: false,
 };
 
 /**
@@ -76,13 +78,39 @@ async function poll(screen: ScreenInfo): Promise<void> {
   if (state.isShuttingDown) return;
 
   try {
-    const track = await getSpotifyInfo();
+    const status = await getSpotifyInfo();
 
     // Check again after async call
     if (state.isShuttingDown) return;
 
-    if (!track) {
-      // Spotify not playing - restore original background
+    if (status === "not_running") {
+      // Spotify is not open
+      if (!state.isWaitingForSpotify) {
+        state.isWaitingForSpotify = true;
+        state.lastTrackId = null;
+        console.log("⏳ Waiting for Spotify to open...");
+
+        // Restore original background when Spotify closes
+        if (state.originalBackground) {
+          try {
+            await setDesktopBackground(state.originalBackground);
+            console.log("🖼️  Restored original background");
+          } catch (error) {
+            console.error("❌ Failed to restore original background:", error);
+          }
+        }
+      }
+      return;
+    }
+
+    // Spotify is running (playing or paused)
+    if (state.isWaitingForSpotify) {
+      state.isWaitingForSpotify = false;
+      console.log("✅ Spotify detected! Resuming...");
+    }
+
+    if (status === "paused") {
+      // Spotify is running but not playing - restore original background
       if (state.lastTrackId !== null) {
         console.log("⏸️  Playback stopped");
         state.lastTrackId = null;
@@ -100,6 +128,8 @@ async function poll(screen: ScreenInfo): Promise<void> {
       return;
     }
 
+    // status is a SpotifyTrack
+    const track = status;
     const trackId = getTrackId(track);
 
     // Check if track changed
