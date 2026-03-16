@@ -2,6 +2,21 @@ import { runAppleScript } from "run-applescript";
 import type { SpotifyTrack } from "./config";
 
 /**
+ * The status returned by getSpotifyInfo:
+ * - SpotifyTrack: Spotify is running and a track is playing
+ * - "paused":     Spotify is running but playback is paused/stopped
+ * - "not_running": Spotify is not running
+ */
+export type SpotifyStatus = SpotifyTrack | "paused" | "not_running";
+
+// Known Apple Events / Spotify connection error codes that indicate Spotify quit:
+//   -609 connection is invalid, -600 process is not running, -1743 permission denied
+const KNOWN_CONNECTION_ERRORS = new Set(["-609", "-600", "-1743"]);
+
+// Matches AppleScript error codes in formats like "(-609)" or "error -609"
+const APPLESCRIPT_ERROR_CODE_RE = /(?:\(|error\s+)(-\d+)\)?/;
+
+/**
  * Splits an artist string by common multi-artist word delimiters (e.g. " & ", "and", "feat.")
  * and returns a trimmed list of individual artist names.
  */
@@ -34,24 +49,37 @@ function mergeArtists(primary: string, secondary: string): string {
 
 /**
  * Fetches current track info from Spotify via AppleScript.
- * Returns null if Spotify isn't running or no track is playing.
+ * Returns "not_running" if Spotify isn't open, "paused" if open but not playing,
+ * or a SpotifyTrack object if a track is currently playing.
  */
-export async function getSpotifyInfo(): Promise<SpotifyTrack | null> {
-  const result = await runAppleScript(`
-    tell application "Spotify"
-      if it is running then
-        if player state is playing then
-          return (artist of current track) & "|||" & (name of current track) & "|||" & (artwork url of current track) & "|||" & (album artist of current track)
+export async function getSpotifyInfo(): Promise<SpotifyStatus> {
+  let result: string;
+  try {
+    result = await runAppleScript(`
+      tell application "Spotify"
+        if it is running then
+          if player state is playing then
+            return (artist of current track) & "|||" & (name of current track) & "|||" & (artwork url of current track) & "|||" & (album artist of current track)
+          else
+            return "paused"
+          end if
         else
-          return "paused"
+          return "not_running"
         end if
-      else
-        return "null"
-      end if
-    end tell
-  `);
+      end tell
+    `);
+  } catch (error) {
+    // Spotify closed mid-query (e.g. AppleScript error -609 "connection is invalid").
+    const message = error instanceof Error ? error.message : String(error);
+    const errorCode = message.match(APPLESCRIPT_ERROR_CODE_RE)?.[1];
+    if (!errorCode || !KNOWN_CONNECTION_ERRORS.has(errorCode)) {
+      console.warn("⚠️  AppleScript error (treating as not running):", message);
+    }
+    return "not_running";
+  }
 
-  if (result === "null" || result === "paused") return null;
+  if (result === "not_running") return "not_running";
+  if (result === "paused") return "paused";
 
   const [artistRaw, trackRaw, artworkUrl, albumArtistRaw] = result.split("|||");
 
