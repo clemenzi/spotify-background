@@ -37,6 +37,9 @@ async function updateBackground(track: SpotifyTrack, screen: ScreenInfo): Promis
   state.isUpdating = true;
 
   try {
+    // Abort if Spotify closed or we're shutting down while waiting for artwork
+    if (state.isWaitingForSpotify || state.isShuttingDown) return;
+
     // Use cached artwork or download new
     const artwork = (track.artworkUrl === state.lastArtworkUrl && state.cachedArtwork)
       ? state.cachedArtwork
@@ -48,9 +51,15 @@ async function updateBackground(track: SpotifyTrack, screen: ScreenInfo): Promis
         return newArtwork;
       })();
 
+    // Abort if state changed while downloading
+    if (state.isWaitingForSpotify || state.isShuttingDown) return;
+
     // Generate the image
     console.log("🎨 Generating image...");
     const image = await generateNowPlayingImage(artwork, track, screen, track.artworkUrl);
+
+    // Abort if state changed while generating
+    if (state.isWaitingForSpotify || state.isShuttingDown) return;
 
     const filename = `now_playing_${Date.now()}.png`;
     const newOutputPath = join('/tmp', filename);

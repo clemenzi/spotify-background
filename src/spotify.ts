@@ -9,6 +9,13 @@ import type { SpotifyTrack } from "./config";
  */
 export type SpotifyStatus = SpotifyTrack | "paused" | "not_running";
 
+// Known Apple Events / Spotify connection error codes that indicate Spotify quit:
+//   -609 connection is invalid, -600 process is not running, -1743 permission denied
+const KNOWN_CONNECTION_ERRORS = new Set(["-609", "-600", "-1743"]);
+
+// Matches AppleScript error codes in formats like "(-609)" or "error -609"
+const APPLESCRIPT_ERROR_CODE_RE = /(?:\(|error\s+)(-\d+)\)?/;
+
 /**
  * Fetches current track info from Spotify via AppleScript.
  * Returns "not_running" if Spotify isn't open, "paused" if open but not playing,
@@ -32,10 +39,10 @@ export async function getSpotifyInfo(): Promise<SpotifyStatus> {
     `);
   } catch (error) {
     // Spotify closed mid-query (e.g. AppleScript error -609 "connection is invalid").
-    // Log unexpected errors (anything that isn't a known Spotify connection error).
     const message = error instanceof Error ? error.message : String(error);
-    if (!message.includes("-609") && !message.includes("connection is invalid")) {
-      console.error("⚠️  AppleScript error (treating as not running):", message);
+    const errorCode = message.match(APPLESCRIPT_ERROR_CODE_RE)?.[1];
+    if (!errorCode || !KNOWN_CONNECTION_ERRORS.has(errorCode)) {
+      console.warn("⚠️  AppleScript error (treating as not running):", message);
     }
     return "not_running";
   }
