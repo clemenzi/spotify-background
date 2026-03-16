@@ -2,13 +2,13 @@ import { runAppleScript } from "run-applescript";
 import type { SpotifyTrack } from "./config";
 
 /**
- * Splits an artist string by common multi-artist delimiters and returns
- * a deduplicated, trimmed list of individual artist names.
+ * Splits an artist string by common multi-artist word delimiters (e.g. " & ", "and", "feat.")
+ * and returns a trimmed list of individual artist names.
  */
 function parseArtistList(artistStr: string): string[] {
   if (!artistStr || !artistStr.trim()) return [];
   return artistStr
-    .split(/,\s*|\s+&\s+/)
+    .split(/\s+(?:&|and|feat\.?|ft\.?)\s+/i)
     .map((a) => a.trim())
     .filter((a) => a.length > 0);
 }
