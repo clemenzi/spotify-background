@@ -22,7 +22,11 @@ export async function getSpotifyInfo(): Promise<SpotifyTrack | null> {
 
   if (result === "null" || result === "paused") return null;
 
-  const [artistRaw, trackRaw, artworkUrl] = result.split("|||");
+  const [artistRaw, trackRaw, rawArtworkUrl] = result.split("|||");
+
+  // AppleScript returns the literal string "missing value" when the property is null
+  // (e.g. when Spotify plays an ad). Normalize it to an empty string.
+  const artworkUrl = rawArtworkUrl === "missing value" ? "" : rawArtworkUrl;
 
   let artist = artistRaw;
   let track = trackRaw;
