@@ -142,6 +142,15 @@ async function poll(screen: ScreenInfo): Promise<void> {
       return;
     }
 
+    if (status === "unavailable") {
+      if (state.lastTrackId !== null) {
+        console.log("📢 Current item has no artwork (possibly an ad)");
+        state.lastTrackId = null;
+        await restoreOriginalBackground();
+      }
+      return;
+    }
+
     // status is a SpotifyTrack
     const track = status;
     const trackId = getTrackId(track);

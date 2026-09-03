@@ -5,9 +5,10 @@ import type { SpotifyTrack } from "./config";
  * The status returned by getSpotifyInfo:
  * - SpotifyTrack: Spotify is running and a track is playing
  * - "paused":     Spotify is running but playback is paused/stopped
+ * - "unavailable": the current item (for example, an ad) has no usable metadata
  * - "not_running": Spotify is not running
  */
-export type SpotifyStatus = SpotifyTrack | "paused" | "not_running";
+export type SpotifyStatus = SpotifyTrack | "paused" | "unavailable" | "not_running";
 
 // Known Apple Events / Spotify connection error codes that indicate Spotify quit:
 //   -609 connection is invalid, -600 process is not running, -1743 permission denied
@@ -23,11 +24,18 @@ const FEATURED_ARTIST_PATTERNS = [
 ];
 
 const MAX_ARTISTS = 6;
+const MISSING_VALUE = "missing value";
 
 /** Converts Spotify's AppleScript response into validated track metadata. */
 export function parseSpotifyTrack(result: string): SpotifyTrack {
   const parts = result.split("|||");
-  if (parts.length !== 3 || parts.some((part) => part.trim().length === 0)) {
+  if (
+    parts.length !== 3 ||
+    parts.some((part) => {
+      const value = part.trim();
+      return value.length === 0 || value.toLowerCase() === MISSING_VALUE;
+    })
+  ) {
     throw new Error("Spotify returned incomplete track metadata");
   }
 
@@ -51,10 +59,32 @@ export function parseSpotifyTrack(result: string): SpotifyTrack {
   return { artist, track, artworkUrl };
 }
 
+/** Converts AppleScript output into a watcher status. */
+export function parseSpotifyResponse(result: string): SpotifyStatus {
+  const value = result.trim();
+  if (value === "not_running") return "not_running";
+  if (value === "paused") return "paused";
+  if (value === "unavailable") return "unavailable";
+
+  const parts = value.split("|||");
+  if (
+    parts.length === 3 &&
+    parts.some((part) => {
+      const metadata = part.trim();
+      return metadata.length === 0 || metadata.toLowerCase() === MISSING_VALUE;
+    })
+  ) {
+    return "unavailable";
+  }
+
+  return parseSpotifyTrack(value);
+}
+
 /**
  * Fetches current track info from Spotify via AppleScript.
  * Returns "not_running" if Spotify isn't open, "paused" if open but not playing,
- * or a SpotifyTrack object if a track is currently playing.
+ * "unavailable" if the current item has incomplete metadata, or a SpotifyTrack
+ * object if a track is currently playing.
  */
 export async function getSpotifyInfo(): Promise<SpotifyStatus> {
   let result: string;
@@ -63,7 +93,16 @@ export async function getSpotifyInfo(): Promise<SpotifyStatus> {
       tell application "Spotify"
         if it is running then
           if player state is playing then
-            return (artist of current track) & "|||" & (name of current track) & "|||" & (artwork url of current track)
+            set currentItem to current track
+            set currentArtist to artist of currentItem
+            set currentName to name of currentItem
+            set currentArtwork to artwork url of currentItem
+
+            if currentArtist is missing value or currentName is missing value or currentArtwork is missing value then
+              return "unavailable"
+            end if
+
+            return currentArtist & "|||" & currentName & "|||" & currentArtwork
           else
             return "paused"
           end if
@@ -82,10 +121,7 @@ export async function getSpotifyInfo(): Promise<SpotifyStatus> {
     return "not_running";
   }
 
-  if (result === "not_running") return "not_running";
-  if (result === "paused") return "paused";
-
-  return parseSpotifyTrack(result);
+  return parseSpotifyResponse(result);
 }
 
 /**

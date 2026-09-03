@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getTrackId, parseSpotifyTrack } from "../src/spotify";
+import { getTrackId, parseSpotifyResponse, parseSpotifyTrack } from "../src/spotify";
 
 test("parses Spotify metadata", () => {
   assert.deepEqual(parseSpotifyTrack("Artist|||Track|||https://example.com/art.jpg"), {
@@ -25,6 +25,15 @@ test("limits unusually long artist lists", () => {
 
 test("rejects incomplete Spotify metadata", () => {
   assert.throws(() => parseSpotifyTrack("Artist|||Track|||"), /incomplete track metadata/);
+  assert.throws(
+    () => parseSpotifyTrack("Artist|||Track|||missing value"),
+    /incomplete track metadata/,
+  );
+});
+
+test("treats ads and other items without artwork as unavailable", () => {
+  assert.equal(parseSpotifyResponse("unavailable"), "unavailable");
+  assert.equal(parseSpotifyResponse("|||Ad|||missing value"), "unavailable");
 });
 
 test("track IDs include all fields that affect the wallpaper", () => {
