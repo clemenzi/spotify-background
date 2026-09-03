@@ -3,12 +3,20 @@
   "version": "1.0.0",
   "description": "Spotify Now Playing desktop background for macOS",
   "type": "module",
-  "main": "src/cli.ts",
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin"
+  ],
   "bin": {
     "spotify-background": "./src/cli.ts"
   },
   "scripts": {
-    "start": "tsx src/cli.ts"
+    "start": "node --import tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "check": "pnpm typecheck && pnpm test"
   },
   "keywords": [
     "spotify",
@@ -26,6 +34,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.0.9",
-    "tsx": "^4.21.0"
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2"
   }
 }

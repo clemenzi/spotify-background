@@ -16,6 +16,41 @@ const KNOWN_CONNECTION_ERRORS = new Set(["-609", "-600", "-1743"]);
 // Matches AppleScript error codes in formats like "(-609)" or "error -609"
 const APPLESCRIPT_ERROR_CODE_RE = /(?:\(|error\s+)(-\d+)\)?/;
 
+const FEATURED_ARTIST_PATTERNS = [
+  /\s*[\(\[]\s*(?:feat\.?|ft\.?|featuring|with|w\/|con|avec|mit|c\/)\s+([^)\]]+)[\)\]]/i,
+  /\s*[-–—]\s*(?:feat\.?|ft\.?|featuring|with|w\/|con|avec|mit|c\/)\s+(.+)$/i,
+  /\s+(?:feat\.?|ft\.?|featuring)\s+(.+)$/i,
+];
+
+const MAX_ARTISTS = 6;
+
+/** Converts Spotify's AppleScript response into validated track metadata. */
+export function parseSpotifyTrack(result: string): SpotifyTrack {
+  const parts = result.split("|||");
+  if (parts.length !== 3 || parts.some((part) => part.trim().length === 0)) {
+    throw new Error("Spotify returned incomplete track metadata");
+  }
+
+  let [artist, track, artworkUrl] = parts.map((part) => part.trim()) as [string, string, string];
+
+  for (const pattern of FEATURED_ARTIST_PATTERNS) {
+    const featuredArtist = track.match(pattern);
+    const featuredName = featuredArtist?.[1];
+    if (!featuredArtist || !featuredName) continue;
+
+    track = track.replace(featuredArtist[0], "").trim();
+    artist = `${artist}, ${featuredName.trim()}`;
+    break;
+  }
+
+  const artists = artist.split(/,\s*/);
+  if (artists.length > MAX_ARTISTS) {
+    artist = `${artists.slice(0, MAX_ARTISTS).join(", ")}...`;
+  }
+
+  return { artist, track, artworkUrl };
+}
+
 /**
  * Fetches current track info from Spotify via AppleScript.
  * Returns "not_running" if Spotify isn't open, "paused" if open but not playing,
@@ -50,40 +85,7 @@ export async function getSpotifyInfo(): Promise<SpotifyStatus> {
   if (result === "not_running") return "not_running";
   if (result === "paused") return "paused";
 
-  const [artistRaw, trackRaw, artworkUrl] = result.split("|||");
-
-  let artist = artistRaw;
-  let track = trackRaw;
-
-  // Extract featured artists from track name
-  // Comprehensive regex covering multiple languages and formats:
-  // - Keywords: feat, ft, featuring, with, w/, con (IT/ES), avec (FR), mit (DE), c/
-  // - Formats: (feat. X), [ft X], - feat X, – featuring X, — with X
-  const featPatterns = [
-    // Pattern 1: Inside parentheses or brackets - e.g. "(feat. Artist)" or "[ft Artist]"
-    /\s*[\(\[]\s*(?:feat\.?|ft\.?|featuring|with|w\/|con|avec|mit|c\/)\s+([^)\]]+)[\)\]]/i,
-    // Pattern 2: After dash/hyphen - e.g. "Track - feat. Artist" or "Track – featuring Artist"
-    /\s*[-–—]\s*(?:feat\.?|ft\.?|featuring|with|w\/|con|avec|mit|c\/)\s+(.+)$/i,
-    // Pattern 3: Open-ended at end (no delimiter) - e.g. "Track feat. Artist"
-    /\s+(?:feat\.?|ft\.?|featuring)\s+(.+)$/i,
-  ];
-
-  for (const pattern of featPatterns) {
-    const featMatch = track.match(pattern);
-    if (featMatch) {
-      track = track.replace(featMatch[0], "").trim();
-      artist = `${artist}, ${featMatch[1].trim()}`;
-      break;
-    }
-  }
-
-  // Limit to 6 artists maximum
-  const artistList = artist.split(/,\s*/);
-  if (artistList.length > 6) {
-    artist = artistList.slice(0, 6).join(", ") + "...";
-  }
-
-  return { artist, track, artworkUrl };
+  return parseSpotifyTrack(result);
 }
 
 /**

@@ -1,5 +1,6 @@
-import { writeFile, unlink } from "fs/promises";
-import { join } from "path";
+import { rename, unlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { CONFIG, type SpotifyTrack, type ScreenInfo } from "./config";
 import { getSpotifyInfo, getTrackId } from "./spotify";
 import { getScreenInfo, getDesktopBackground, setDesktopBackground } from "./screen";
@@ -10,10 +11,10 @@ interface WatcherState {
   lastArtworkUrl: string | null;
   cachedArtwork: Buffer | null;
   outputPath: string | null;
-  isUpdating: boolean;
   originalBackground: string | null;
   isShuttingDown: boolean;
-  pollIntervalId: ReturnType<typeof setInterval> | null;
+  pollTimeoutId: ReturnType<typeof setTimeout> | null;
+  activePoll: Promise<void> | null;
   isWaitingForSpotify: boolean;
 }
 
@@ -22,60 +23,84 @@ const state: WatcherState = {
   lastArtworkUrl: null,
   cachedArtwork: null,
   outputPath: null,
-  isUpdating: false,
   originalBackground: null,
   isShuttingDown: false,
-  pollIntervalId: null,
+  pollTimeoutId: null,
+  activePoll: null,
   isWaitingForSpotify: false,
 };
+
+// Alternate between two stable URLs: macOS does not reload a wallpaper when
+// its path is unchanged, while timestamped paths fill Recent Wallpapers.
+const OUTPUT_PATHS = [
+  join(tmpdir(), "spotify-background-now-playing-1.png"),
+  join(tmpdir(), "spotify-background-now-playing-2.png"),
+] as const;
+const STAGING_OUTPUT_PATHS = [
+  `${OUTPUT_PATHS[0]}.tmp`,
+  `${OUTPUT_PATHS[1]}.tmp`,
+] as const;
+let cleanupPromise: Promise<void> | null = null;
+
+function shouldAbortWork(): boolean {
+  return state.isWaitingForSpotify || state.isShuttingDown;
+}
+
+async function removeGeneratedFiles(): Promise<void> {
+  await Promise.all(
+    [...OUTPUT_PATHS, ...STAGING_OUTPUT_PATHS].map((path) =>
+      unlink(path).catch(() => undefined),
+    ),
+  );
+}
+
+async function restoreOriginalBackground(): Promise<void> {
+  if (!state.originalBackground) return;
+
+  try {
+    await setDesktopBackground(state.originalBackground);
+    console.log("🖼️  Restored original background");
+  } catch (error) {
+    console.error("❌ Failed to restore original background:", error);
+  }
+}
 
 /**
  * Updates the desktop background with the current track.
  */
 async function updateBackground(track: SpotifyTrack, screen: ScreenInfo): Promise<void> {
-  if (state.isUpdating) return; // Prevent concurrent updates
-  state.isUpdating = true;
-
   try {
-    // Abort if Spotify closed or we're shutting down while waiting for artwork
-    if (state.isWaitingForSpotify || state.isShuttingDown) return;
+    if (shouldAbortWork()) return;
 
-    // Use cached artwork or download new
-    const artwork = (track.artworkUrl === state.lastArtworkUrl && state.cachedArtwork)
-      ? state.cachedArtwork
-      : await (async () => {
-        console.log("📥 Downloading new artwork...");
-        const newArtwork = await downloadArtwork(track.artworkUrl);
-        state.cachedArtwork = newArtwork;
-        state.lastArtworkUrl = track.artworkUrl;
-        return newArtwork;
-      })();
+    let artwork = state.cachedArtwork;
+    if (track.artworkUrl !== state.lastArtworkUrl || !artwork) {
+      console.log("📥 Downloading new artwork...");
+      artwork = await downloadArtwork(track.artworkUrl);
+      state.cachedArtwork = artwork;
+      state.lastArtworkUrl = track.artworkUrl;
+    }
 
-    // Abort if state changed while downloading
-    if (state.isWaitingForSpotify || state.isShuttingDown) return;
+    if (shouldAbortWork()) return;
 
-    // Generate the image
     console.log("🎨 Generating image...");
     const image = await generateNowPlayingImage(artwork, track, screen, track.artworkUrl);
 
-    // Abort if state changed while generating
-    if (state.isWaitingForSpotify || state.isShuttingDown) return;
+    if (shouldAbortWork()) return;
 
-    const filename = `now_playing_${Date.now()}.png`;
-    const newOutputPath = join('/tmp', filename);
+    const currentIndex = OUTPUT_PATHS.findIndex((path) => path === state.outputPath);
+    const nextIndex: 0 | 1 = currentIndex === 0 ? 1 : 0;
+    const nextOutputPath = OUTPUT_PATHS[nextIndex];
+    const stagingOutputPath = STAGING_OUTPUT_PATHS[nextIndex];
 
-    await writeFile(newOutputPath, image);
+    await writeFile(stagingOutputPath, image);
+    await rename(stagingOutputPath, nextOutputPath);
 
-    // Set as background
-    await setDesktopBackground(newOutputPath);
+    await setDesktopBackground(nextOutputPath);
     console.log(`✅ Background updated: "${track.track}" by ${track.artist}`);
 
-    if (state.outputPath && state.outputPath !== newOutputPath) {
-      await unlink(state.outputPath).catch(() => { });
-    }
-    state.outputPath = newOutputPath;
+    state.outputPath = nextOutputPath;
   } finally {
-    state.isUpdating = false;
+    await Promise.all(STAGING_OUTPUT_PATHS.map((path) => unlink(path).catch(() => undefined)));
   }
 }
 
@@ -93,21 +118,11 @@ async function poll(screen: ScreenInfo): Promise<void> {
     if (state.isShuttingDown) return;
 
     if (status === "not_running") {
-      // Spotify is not open
       if (!state.isWaitingForSpotify) {
         state.isWaitingForSpotify = true;
         state.lastTrackId = null;
         console.log("⏳ Waiting for Spotify to open...");
-
-        // Restore original background when Spotify closes
-        if (state.originalBackground) {
-          try {
-            await setDesktopBackground(state.originalBackground);
-            console.log("🖼️  Restored original background");
-          } catch (error) {
-            console.error("❌ Failed to restore original background:", error);
-          }
-        }
+        await restoreOriginalBackground();
       }
       return;
     }
@@ -119,20 +134,10 @@ async function poll(screen: ScreenInfo): Promise<void> {
     }
 
     if (status === "paused") {
-      // Spotify is running but not playing - restore original background
       if (state.lastTrackId !== null) {
         console.log("⏸️  Playback stopped");
         state.lastTrackId = null;
-
-        // Restore original background
-        if (state.originalBackground) {
-          try {
-            await setDesktopBackground(state.originalBackground);
-            console.log("🖼️  Restored original background");
-          } catch {
-            console.error("❌ Failed to restore original background");
-          }
-        }
+        await restoreOriginalBackground();
       }
       return;
     }
@@ -141,23 +146,42 @@ async function poll(screen: ScreenInfo): Promise<void> {
     const track = status;
     const trackId = getTrackId(track);
 
-    // Check if track changed
     if (trackId !== state.lastTrackId) {
       console.log(`\n🎵 Track changed: "${track.track}" by ${track.artist}`);
-      state.lastTrackId = trackId;
       await updateBackground(track, screen);
+      // Only mark the track as handled after the wallpaper was applied. Failed
+      // downloads or renders are retried on the next poll.
+      if (!shouldAbortWork()) state.lastTrackId = trackId;
     }
   } catch (error) {
     // Suppress errors during shutdown (e.g., SIGINT interrupting osascript)
     if (state.isShuttingDown) return;
 
     // Check for SIGINT signal error (user pressed Ctrl+C)
-    if (error instanceof Error && error.message.includes('SIGINT')) {
+    if (error instanceof Error && error.message.includes("SIGINT")) {
       return; // Silently ignore - shutdown handler will take care of cleanup
     }
 
     console.error("❌ Poll error:", error);
   }
+}
+
+function runPoll(screen: ScreenInfo): Promise<void> {
+  const activePoll = poll(screen).finally(() => {
+    if (state.activePoll === activePoll) state.activePoll = null;
+  });
+  state.activePoll = activePoll;
+  return activePoll;
+}
+
+function scheduleNextPoll(screen: ScreenInfo): void {
+  if (state.isShuttingDown) return;
+
+  state.pollTimeoutId = setTimeout(async () => {
+    state.pollTimeoutId = null;
+    await runPoll(screen);
+    scheduleNextPoll(screen);
+  }, CONFIG.POLL_INTERVAL_MS);
 }
 
 /**
@@ -174,11 +198,9 @@ export async function startWatcher(): Promise<void> {
   console.log(`📺 Screen: ${screen.width}x${screen.height} @ ${screen.scale}x`);
   console.log(`⏱️  Polling every ${CONFIG.POLL_INTERVAL_MS}ms\n`);
 
-  // Initial check
-  await poll(screen);
+  await runPoll(screen);
 
-  // Start polling loop and save interval ID for cleanup
-  state.pollIntervalId = setInterval(() => poll(screen), CONFIG.POLL_INTERVAL_MS);
+  scheduleNextPoll(screen);
 
   console.log("👀 Watching for track changes... (Ctrl+C to stop)\n");
 }
@@ -188,40 +210,34 @@ export async function startWatcher(): Promise<void> {
  */
 export function requestShutdown(): void {
   state.isShuttingDown = true;
-  if (state.pollIntervalId) {
-    clearInterval(state.pollIntervalId);
-    state.pollIntervalId = null;
+  if (state.pollTimeoutId) {
+    clearTimeout(state.pollTimeoutId);
+    state.pollTimeoutId = null;
   }
 }
 
 /**
  * Cleanup function for graceful shutdown.
  */
-export async function cleanup(): Promise<void> {
-  // Mark as shutting down to stop any in-flight operations
+async function performCleanup(): Promise<void> {
   requestShutdown();
 
   console.log("\n🧹 Cleaning up...");
 
-  // Wait briefly for any in-flight operations to complete
-  if (state.isUpdating) {
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
+  // Await the real in-flight operation instead of relying on an arbitrary delay.
+  await state.activePoll?.catch(() => undefined);
 
-  // Restore original background
-  if (state.originalBackground) {
-    try {
-      await setDesktopBackground(state.originalBackground);
-      console.log(`🖼️  Restored original background`);
-    } catch {
-      console.error("❌ Failed to restore original background");
-    }
-  }
+  await restoreOriginalBackground();
 
+  await removeGeneratedFiles();
   if (state.outputPath) {
-    await unlink(state.outputPath).catch(() => { });
     console.log("🗑️  Removed temporary file");
   }
 
   clearBackgroundCache();
+}
+
+export function cleanup(): Promise<void> {
+  cleanupPromise ??= performCleanup();
+  return cleanupPromise;
 }

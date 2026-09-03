@@ -3,6 +3,10 @@ import type { ScreenInfo } from "./config";
 
 let cachedScreenInfo: ScreenInfo | null = null;
 
+function escapeAppleScriptString(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
 /**
  * Gets screen dimensions and scale factor via AppleScript.
  * Caches the result since screen info rarely changes.
@@ -21,11 +25,17 @@ export async function getScreenInfo(): Promise<ScreenInfo> {
   `);
 
   const [w, h, s] = result.split(",");
-  cachedScreenInfo = {
-    width: parseInt(w, 10),
-    height: parseInt(h, 10),
-    scale: parseFloat(s),
-  };
+  if (w === undefined || h === undefined || s === undefined) {
+    throw new Error(`Invalid screen information returned by macOS: ${result}`);
+  }
+  const width = Number.parseInt(w, 10);
+  const height = Number.parseInt(h, 10);
+  const scale = Number.parseFloat(s);
+  if (![width, height, scale].every(Number.isFinite) || width <= 0 || height <= 0 || scale <= 0) {
+    throw new Error(`Invalid screen information returned by macOS: ${result}`);
+  }
+
+  cachedScreenInfo = { width, height, scale };
 
   return cachedScreenInfo;
 }
@@ -48,10 +58,11 @@ export async function getDesktopBackground(): Promise<string> {
  * Sets the desktop background for all screens.
  */
 export async function setDesktopBackground(imagePath: string): Promise<void> {
+  const escapedPath = escapeAppleScriptString(imagePath);
   await runAppleScript(`
     tell application "System Events"
       tell every desktop
-        set picture to "${imagePath}"
+        set picture to "${escapedPath}"
       end tell
     end tell
   `);

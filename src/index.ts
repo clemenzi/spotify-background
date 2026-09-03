@@ -1,21 +1,21 @@
 import { startWatcher, cleanup, requestShutdown } from "./watcher";
 
-// Graceful shutdown handlers
-process.on("SIGINT", async () => {
-  // Immediately stop polling to prevent SIGINT propagation errors
-  requestShutdown();
-  await cleanup();
-  process.exit(0);
-});
+let isExiting = false;
 
-process.on("SIGTERM", async () => {
+async function shutdown(): Promise<void> {
+  if (isExiting) return;
+  isExiting = true;
   requestShutdown();
   await cleanup();
   process.exit(0);
-});
+}
+
+process.once("SIGINT", () => void shutdown());
+process.once("SIGTERM", () => void shutdown());
 
 // Start the watcher
 startWatcher().catch((error) => {
   console.error("❌ Fatal error:", error);
-  process.exit(1);
+  requestShutdown();
+  void cleanup().finally(() => process.exit(1));
 });

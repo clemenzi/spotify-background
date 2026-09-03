@@ -18,9 +18,15 @@ async function createBlurredBackground(
   width: number,
   height: number
 ): Promise<Buffer> {
+  const scale = Math.min(1, CONFIG.BACKGROUND_WORK_SIZE / Math.max(width, height));
+  const workWidth = Math.max(1, Math.round(width * scale));
+  const workHeight = Math.max(1, Math.round(height * scale));
+
   return sharp(artwork)
-    .resize(width * 2, height * 2, { fit: "cover", kernel: "cubic" })
-    .blur(100)
+    // Blur a smaller intermediate image. Processing a 2x Retina canvas first
+    // can otherwise consume hundreds of MB for no visible benefit.
+    .resize(workWidth, workHeight, { fit: "cover", kernel: "cubic" })
+    .blur(Math.max(1, Math.round(30 * scale)))
     .resize(width, height, { kernel: "cubic" })
     .modulate({
       brightness: CONFIG.BACKGROUND_BRIGHTNESS,
@@ -28,16 +34,14 @@ async function createBlurredBackground(
     })
     .composite([
       {
-        input: await sharp({
+        input: {
           create: {
             width,
             height,
             channels: 4,
             background: { r: 0, g: 0, b: 0, alpha: CONFIG.DARK_OVERLAY_OPACITY },
           },
-        })
-          .png()
-          .toBuffer(),
+        },
         blend: "over",
       },
     ])
@@ -115,17 +119,17 @@ export async function generateNowPlayingImage(
   const albumX = Math.round(CONFIG.ALBUM_MARGIN_LEFT * sizeFactor);
   const albumY = Math.floor((height - albumSize) / 2);
   const textX = albumX + albumSize + Math.round(CONFIG.TEXT_GAP * sizeFactor);
+  const cacheKey = `${artworkUrl}\0${width}x${height}`;
 
   // Get or create cached background
-  let background = backgroundCache.get(artworkUrl);
+  let background = backgroundCache.get(cacheKey);
   if (!background) {
     background = await createBlurredBackground(artwork, width, height);
-    backgroundCache.set(artworkUrl, background);
+    backgroundCache.set(cacheKey, background);
 
-    // Limit cache to last 5 artworks
-    if (backgroundCache.size > 5) {
+    if (backgroundCache.size > CONFIG.BACKGROUND_CACHE_ENTRIES) {
       const firstKey = backgroundCache.keys().next().value;
-      if (firstKey) backgroundCache.delete(firstKey);
+      if (firstKey !== undefined) backgroundCache.delete(firstKey);
     }
   }
 
@@ -158,9 +162,21 @@ export function clearBackgroundCache(): void {
  * Downloads an image from URL and returns it as a Buffer.
  */
 export async function downloadArtwork(url: string): Promise<Buffer> {
-  const response = await fetch(url);
+  const response = await fetch(url, {
+    signal: AbortSignal.timeout(CONFIG.ARTWORK_DOWNLOAD_TIMEOUT_MS),
+  });
   if (!response.ok) {
     throw new Error(`Failed to download image: ${response.status}`);
   }
-  return Buffer.from(await response.arrayBuffer());
+
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > CONFIG.MAX_ARTWORK_BYTES) {
+    throw new Error(`Artwork is too large (${contentLength} bytes)`);
+  }
+
+  const artwork = Buffer.from(await response.arrayBuffer());
+  if (artwork.byteLength > CONFIG.MAX_ARTWORK_BYTES) {
+    throw new Error(`Artwork is too large (${artwork.byteLength} bytes)`);
+  }
+  return artwork;
 }
